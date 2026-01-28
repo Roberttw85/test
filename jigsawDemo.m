@@ -1,6 +1,6 @@
 %% JIGSAW SOLVER DEMO
-% This script demonstrates how to use the Jigsaw Puzzle Solver
-% Now supports multiple pieces per photo!
+% Demonstrates the Jigsaw Puzzle Solver
+% Now handles: puzzles with missing pieces (holes) + photos with multiple pieces
 %
 % Compatible with MATLAB Mobile
 
@@ -9,12 +9,16 @@ function jigsawDemo()
     disp('   JIGSAW PUZZLE SOLVER - DEMO');
     disp('===========================================');
     disp(' ');
-    disp('NEW: Each photo can contain multiple pieces!');
-    disp('The solver will detect and analyze each piece.');
+    disp('This solver finds pieces to fill holes in your puzzle!');
+    disp(' ');
+    disp('How it works:');
+    disp('  1. You provide a photo of your puzzle (with missing pieces)');
+    disp('  2. You provide photos of loose pieces (multiple per photo OK)');
+    disp('  3. The solver matches pieces to holes by edge colors');
     disp(' ');
     disp('Choose a demo option:');
-    disp('  1. Run interactive solver (JigsawSolver)');
-    disp('  2. Create sample test with synthetic images');
+    disp('  1. Run interactive solver');
+    disp('  2. Run synthetic demo (creates test images)');
     disp('  3. Show usage instructions');
     disp(' ');
 
@@ -23,257 +27,227 @@ function jigsawDemo()
     switch choice
         case 1
             JigsawSolver();
-
         case 2
             runSyntheticDemo();
-
         case 3
             showUsageInstructions();
-
         otherwise
-            disp('Invalid choice. Please run jigsawDemo() again.');
+            disp('Invalid choice.');
     end
 end
 
 function runSyntheticDemo()
-    % Create synthetic test images to demonstrate the solver
-    % Creates photos with MULTIPLE pieces each
     disp(' ');
     disp('Creating synthetic test images...');
-    disp('Each photo will contain multiple puzzle pieces.');
 
-    % Create output directory
     outputDir = fullfile(pwd, 'demo_images');
     if ~exist(outputDir, 'dir')
         mkdir(outputDir);
     end
 
-    % Create a target image (the piece we're looking for)
-    targetColor = [0.8, 0.4, 0.2];  % Orange-brown
-    targetImg = createSyntheticPiece(targetColor, 'wavy');
-    imwrite(targetImg, fullfile(outputDir, 'target.png'));
-    disp('Created target image (orange-brown piece)');
+    %% Create puzzle with holes
+    puzzleSize = [400, 500];
+    [puzzleImg, holeInfo] = createPuzzleWithHoles(puzzleSize, 2);
+    imwrite(puzzleImg, fullfile(outputDir, 'puzzle.png'));
+    disp('Created puzzle.png with 2 missing pieces (holes)');
 
-    % Create 3 photos, each with multiple pieces
-    % Photo 1: 4 pieces (none matching)
-    photo1 = createPhotoWithPieces({
-        {[0.3, 0.5, 0.8], 'zigzag'},   % Blue
-        {[0.2, 0.8, 0.3], 'straight'}, % Green
-        {[0.9, 0.1, 0.1], 'wavy'},     % Red
-        {[0.5, 0.5, 0.5], 'zigzag'}    % Gray
-    }, [400, 600]);
-    imwrite(photo1, fullfile(outputDir, 'photo1.png'));
-    disp('Created photo1.png with 4 pieces (no match)');
+    %% Create photos with candidate pieces
+    % Photo 1: 4 pieces (includes 1 matching piece for hole 1)
+    pieceColors1 = {
+        holeInfo(1).matchColor,     % Match for hole 1
+        [0.3, 0.5, 0.8],            % Blue (wrong)
+        [0.2, 0.7, 0.3],            % Green (wrong)
+        [0.8, 0.8, 0.2]             % Yellow (wrong)
+    };
+    photo1 = createPhotoWithPieces(pieceColors1, [350, 500]);
+    imwrite(photo1, fullfile(outputDir, 'pieces_photo1.png'));
+    disp('Created pieces_photo1.png with 4 pieces (1 matches hole 1)');
 
-    % Photo 2: 3 pieces (one similar, one best match)
-    photo2 = createPhotoWithPieces({
-        {[0.75, 0.42, 0.22], 'wavy'},  % BEST MATCH - very close to target
-        {[0.8, 0.8, 0.2], 'straight'}, % Yellow
-        {[0.6, 0.3, 0.2], 'zigzag'}    % Brown (similar but not best)
-    }, [400, 500]);
-    imwrite(photo2, fullfile(outputDir, 'photo2.png'));
-    disp('Created photo2.png with 3 pieces (contains BEST MATCH)');
-
-    % Photo 3: 3 pieces (some similar)
-    photo3 = createPhotoWithPieces({
-        {[0.1, 0.1, 0.1], 'straight'}, % Black
-        {[0.7, 0.4, 0.3], 'wavy'},     % Similar
-        {[0.9, 0.5, 0.3], 'zigzag'}    % Coral
-    }, [400, 500]);
-    imwrite(photo3, fullfile(outputDir, 'photo3.png'));
-    disp('Created photo3.png with 3 pieces (some similar)');
+    % Photo 2: 3 pieces (includes 1 matching piece for hole 2)
+    pieceColors2 = {
+        [0.5, 0.5, 0.5],            % Gray (wrong)
+        holeInfo(2).matchColor,     % Match for hole 2
+        [0.9, 0.3, 0.3]             % Red (wrong)
+    };
+    photo2 = createPhotoWithPieces(pieceColors2, [350, 450]);
+    imwrite(photo2, fullfile(outputDir, 'pieces_photo2.png'));
+    disp('Created pieces_photo2.png with 3 pieces (1 matches hole 2)');
 
     disp(' ');
-    disp('Synthetic images created in: demo_images/');
-    disp(' ');
-    disp('Running solver on synthetic images...');
+    disp('Running solver...');
     disp(' ');
 
-    % Run the quick solver
-    targetPath = fullfile(outputDir, 'target.png');
+    % Run solver
+    puzzlePath = fullfile(outputDir, 'puzzle.png');
     photoPaths = {
-        fullfile(outputDir, 'photo1.png'),
-        fullfile(outputDir, 'photo2.png'),
-        fullfile(outputDir, 'photo3.png')
+        fullfile(outputDir, 'pieces_photo1.png'),
+        fullfile(outputDir, 'pieces_photo2.png')
     };
 
-    [bestMatch, scores] = jigsawQuickSolve(targetPath, photoPaths);
+    [matches, ~] = jigsawQuickSolve(puzzlePath, photoPaths);
 
     disp(' ');
     disp('-------------------------------------------');
     disp('DEMO COMPLETE');
     disp('-------------------------------------------');
     disp(' ');
-    fprintf('The solver found the best match in Photo #%d, Piece #%d\n', ...
-        bestMatch.photoIndex, bestMatch.pieceIndex);
-    disp('(The best matching piece was placed in photo2.png as piece #1)');
-    disp(' ');
 
-    % Display visual comparison if possible
+    for i = 1:length(matches)
+        fprintf('Hole %d matched to Photo %d, Piece %d (Score: %.1f%%)\n', ...
+            i, matches(i).photoIndex, matches(i).pieceIndex, matches(i).score);
+    end
+
+    disp(' ');
+    disp('Expected: Hole 1 -> Photo 1, Piece 1');
+    disp('Expected: Hole 2 -> Photo 2, Piece 2');
+
+    % Visual display
     try
         figure('Name', 'Demo Results', 'NumberTitle', 'off');
 
-        % Target
-        subplot(2, 4, 1);
-        imshow(imread(targetPath));
-        title('TARGET', 'FontSize', 12, 'FontWeight', 'bold', 'Color', 'blue');
+        subplot(2, 3, 1);
+        imshow(imread(puzzlePath));
+        title('Puzzle with Holes', 'FontWeight', 'bold');
 
-        % Best match piece
-        subplot(2, 4, 2);
-        imshow(bestMatch.pieceImage);
-        title(sprintf('BEST MATCH\nPhoto %d, Piece %d\nScore: %.0f%%', ...
-            bestMatch.photoIndex, bestMatch.pieceIndex, bestMatch.score), ...
-            'FontSize', 10, 'FontWeight', 'bold', 'Color', 'green');
+        for i = 1:min(2, length(matches))
+            subplot(2, 3, 1 + i);
+            imshow(matches(i).pieceImage);
+            title(sprintf('Hole %d Match\nPhoto %d, Piece %d', ...
+                i, matches(i).photoIndex, matches(i).pieceIndex), 'Color', [0, 0.5, 0]);
+        end
 
-        % Show all photos
-        subplot(2, 4, 5);
+        subplot(2, 3, 4);
         imshow(imread(photoPaths{1}));
         title('Photo 1', 'FontSize', 10);
 
-        subplot(2, 4, 6);
-        img2 = imread(photoPaths{2});
-        imshow(img2);
-        hold on;
-        if bestMatch.photoIndex == 2
-            rectangle('Position', bestMatch.boundingBox, 'EdgeColor', 'green', 'LineWidth', 2);
-        end
-        title('Photo 2 (has match)', 'FontSize', 10, 'Color', [0, 0.5, 0]);
-        hold off;
-
-        subplot(2, 4, 7);
-        imshow(imread(photoPaths{3}));
-        title('Photo 3', 'FontSize', 10);
-
-        % Top 5 candidates
-        subplot(2, 4, [3, 4, 8]);
-        [~, sortIdx] = sort([scores.totalScore], 'descend');
-        numShow = min(5, length(scores));
-
-        barData = zeros(numShow, 1);
-        labels = cell(numShow, 1);
-        for i = 1:numShow
-            idx = sortIdx(i);
-            barData(i) = scores(idx).totalScore;
-            labels{i} = sprintf('P%d-#%d', scores(idx).photoIndex, scores(idx).localPieceIndex);
-        end
-
-        barh(barData);
-        set(gca, 'YTickLabel', labels, 'YTick', 1:numShow);
-        xlabel('Match Score (%)');
-        title('Top 5 Candidates', 'FontWeight', 'bold');
-        xlim([0, 100]);
-        grid on;
+        subplot(2, 3, 5);
+        imshow(imread(photoPaths{2}));
+        title('Photo 2', 'FontSize', 10);
 
         set(gcf, 'Position', [50, 100, 1000, 600]);
-
-    catch ME
-        disp('(Visual display not available on this platform)');
-        disp(['Reason: ' ME.message]);
+    catch
+        disp('(Visual display not available)');
     end
 end
 
-function img = createSyntheticPiece(baseColor, edgeType)
-    % Create a synthetic puzzle piece image with patterns
+function [puzzleImg, holeInfo] = createPuzzleWithHoles(sz, numHoles)
+    h = sz(1); w = sz(2);
 
-    sz = 80;
-    img = zeros(sz, sz, 3);
+    % Create colorful puzzle base
+    puzzleImg = zeros(h, w, 3);
 
-    % Fill with base color
+    % Create gradient background for puzzle
+    [X, Y] = meshgrid(1:w, 1:h);
+    puzzleImg(:,:,1) = 0.4 + 0.3 * (X / w);      % Red gradient
+    puzzleImg(:,:,2) = 0.3 + 0.2 * (Y / h);      % Green gradient
+    puzzleImg(:,:,3) = 0.5 - 0.2 * (X / w);      % Blue gradient
+
+    % Add some texture
+    noise = rand(h, w) * 0.1;
     for c = 1:3
-        img(:,:,c) = baseColor(c);
+        puzzleImg(:,:,c) = puzzleImg(:,:,c) + noise;
     end
 
-    % Add texture pattern based on edge type
-    [X, Y] = meshgrid(1:sz, 1:sz);
-
-    switch edgeType
-        case 'wavy'
-            pattern = sin(X/5) .* cos(Y/5) * 0.1;
-        case 'zigzag'
-            pattern = mod(X + Y, 15) / 150;
-        case 'straight'
-            pattern = mod(X, 10) / 100;
-        otherwise
-            pattern = zeros(sz);
+    % Add grid lines (puzzle piece edges)
+    gridSpacing = 50;
+    for x = gridSpacing:gridSpacing:w
+        puzzleImg(:, max(1,x-1):min(w,x+1), :) = puzzleImg(:, max(1,x-1):min(w,x+1), :) * 0.7;
+    end
+    for y = gridSpacing:gridSpacing:h
+        puzzleImg(max(1,y-1):min(h,y+1), :, :) = puzzleImg(max(1,y-1):min(h,y+1), :, :) * 0.7;
     end
 
-    for c = 1:3
-        img(:,:,c) = img(:,:,c) + pattern;
+    holeInfo = struct();
+
+    % Create holes (dark regions representing missing pieces)
+    holePositions = [
+        round(h * 0.3), round(w * 0.3);
+        round(h * 0.6), round(w * 0.7)
+    ];
+
+    holeSize = [60, 70];
+
+    for i = 1:min(numHoles, size(holePositions, 1))
+        cy = holePositions(i, 1);
+        cx = holePositions(i, 2);
+
+        y1 = max(1, cy - holeSize(1)/2);
+        y2 = min(h, cy + holeSize(1)/2);
+        x1 = max(1, cx - holeSize(2)/2);
+        x2 = min(w, cx + holeSize(2)/2);
+
+        % Sample edge colors before creating hole
+        edgeColors = struct();
+        edgeColors.top = squeeze(mean(puzzleImg(max(1,y1-5):y1, x1:x2, :), [1, 2]))';
+        edgeColors.bottom = squeeze(mean(puzzleImg(y2:min(h,y2+5), x1:x2, :), [1, 2]))';
+        edgeColors.left = squeeze(mean(puzzleImg(y1:y2, max(1,x1-5):x1, :), [1, 2]))';
+        edgeColors.right = squeeze(mean(puzzleImg(y1:y2, x2:min(w,x2+5), :), [1, 2]))';
+
+        % The matching piece color should match these edges
+        holeInfo(i).edgeColors = edgeColors;
+        holeInfo(i).matchColor = (edgeColors.top + edgeColors.bottom + edgeColors.left + edgeColors.right) / 4;
+        holeInfo(i).position = [y1, x1, y2-y1, x2-x1];
+
+        % Create dark hole (simulating table showing through)
+        puzzleImg(y1:y2, x1:x2, 1) = 0.15;
+        puzzleImg(y1:y2, x1:x2, 2) = 0.12;
+        puzzleImg(y1:y2, x1:x2, 3) = 0.1;
     end
 
-    % Add circular gradient
-    centerX = sz/2;
-    centerY = sz/2;
-    dist = sqrt((X - centerX).^2 + (Y - centerY).^2);
-    gradient = 1 - (dist / (sz/2)) * 0.15;
-    gradient = max(0, min(1, gradient));
-
-    for c = 1:3
-        img(:,:,c) = img(:,:,c) .* gradient;
-    end
-
-    % Add slight noise
-    noise = rand(sz, sz) * 0.03;
-    for c = 1:3
-        img(:,:,c) = img(:,:,c) + noise;
-    end
-
-    img = min(1, max(0, img));
+    puzzleImg = min(1, max(0, puzzleImg));
 end
 
-function photo = createPhotoWithPieces(pieceSpecs, photoSize)
-    % Create a photo containing multiple puzzle pieces on a background
-    % pieceSpecs: cell array of {color, edgeType} pairs
-    % photoSize: [height, width] of the photo
+function photo = createPhotoWithPieces(pieceColors, photoSize)
+    h = photoSize(1); w = photoSize(2);
 
-    h = photoSize(1);
-    w = photoSize(2);
-
-    % Create light gray background
+    % Light background
     photo = ones(h, w, 3) * 0.85;
+    photo = photo + rand(h, w, 1) * 0.05;
 
-    % Add slight background texture
-    bgNoise = rand(h, w) * 0.05;
-    for c = 1:3
-        photo(:,:,c) = photo(:,:,c) + bgNoise;
-    end
-
-    numPieces = length(pieceSpecs);
-
-    % Calculate grid layout for pieces
+    numPieces = length(pieceColors);
     cols = ceil(sqrt(numPieces));
     rows = ceil(numPieces / cols);
 
     cellW = floor(w / cols);
     cellH = floor(h / rows);
+    pieceSize = min(cellW, cellH) - 20;
 
-    pieceIdx = 1;
+    idx = 1;
     for row = 1:rows
         for col = 1:cols
-            if pieceIdx > numPieces
+            if idx > numPieces
                 break;
             end
 
-            % Create piece
-            spec = pieceSpecs{pieceIdx};
-            piece = createSyntheticPiece(spec{1}, spec{2});
-            [pH, pW, ~] = size(piece);
+            cx = (col - 0.5) * cellW + randi([-10, 10]);
+            cy = (row - 0.5) * cellH + randi([-10, 10]);
 
-            % Calculate position with some random offset
-            baseX = (col - 1) * cellW + round(cellW/2 - pW/2);
-            baseY = (row - 1) * cellH + round(cellH/2 - pH/2);
+            x1 = max(1, round(cx - pieceSize/2));
+            y1 = max(1, round(cy - pieceSize/2));
+            x2 = min(w, round(cx + pieceSize/2));
+            y2 = min(h, round(cy + pieceSize/2));
 
-            % Add random offset (but keep within bounds)
-            offsetX = randi([-15, 15]);
-            offsetY = randi([-15, 15]);
+            baseColor = pieceColors{idx};
+            if length(baseColor) ~= 3
+                baseColor = [0.5, 0.5, 0.5];
+            end
 
-            startX = max(1, min(w - pW, baseX + offsetX));
-            startY = max(1, min(h - pH, baseY + offsetY));
+            % Create piece with texture
+            pieceH = y2 - y1 + 1;
+            pieceW = x2 - x1 + 1;
+            [PX, PY] = meshgrid(1:pieceW, 1:pieceH);
 
-            % Place piece on photo
-            photo(startY:startY+pH-1, startX:startX+pW-1, :) = piece;
+            for c = 1:3
+                piece = ones(pieceH, pieceW) * baseColor(c);
+                % Add gradient
+                piece = piece + (PX / pieceW - 0.5) * 0.1;
+                piece = piece + (PY / pieceH - 0.5) * 0.05;
+                % Add noise
+                piece = piece + rand(pieceH, pieceW) * 0.05;
+                photo(y1:y2, x1:x2, c) = piece;
+            end
 
-            pieceIdx = pieceIdx + 1;
+            idx = idx + 1;
         end
     end
 
@@ -286,50 +260,44 @@ function showUsageInstructions()
     disp('       USAGE INSTRUCTIONS');
     disp('===========================================');
     disp(' ');
-    disp('NEW FEATURE: Multi-Piece Detection!');
-    disp('Each candidate photo can contain multiple puzzle pieces.');
-    disp('The solver automatically detects and analyzes each piece.');
+    disp('WHAT YOU NEED:');
+    disp('  1. A photo of your puzzle WITH MISSING PIECES');
+    disp('     - The holes (missing areas) should be visible');
+    disp('     - The table/background should show through the holes');
     disp(' ');
-    disp('MATLAB MOBILE WORKFLOW:');
-    disp('-----------------------');
-    disp('1. Take a photo of the empty puzzle hole (target)');
-    disp('2. Take photos of your puzzle pieces (multiple pieces per photo OK!)');
-    disp('3. Transfer photos to your device or use MATLAB Mobile camera');
-    disp('4. Run one of the following:');
+    disp('  2. Photos of the loose puzzle pieces');
+    disp('     - Place pieces on a plain background');
+    disp('     - Multiple pieces per photo is OK!');
+    disp('     - Space pieces apart so they don''t touch');
     disp(' ');
-    disp('   Method A - Interactive (easiest):');
-    disp('   >> JigsawSolver()');
-    disp('   Then follow the prompts to select images.');
+    disp('HOW TO RUN:');
+    disp('-----------');
     disp(' ');
-    disp('   Method B - Direct file paths:');
-    disp('   >> target = ''/path/to/hole.jpg'';');
-    disp('   >> photos = {''/path/to/pieces1.jpg'', ''/path/to/pieces2.jpg''};');
-    disp('   >> [best, scores] = jigsawQuickSolve(target, photos);');
+    disp('Method A - Interactive:');
+    disp('  >> JigsawSolver()');
+    disp('  Then select your images when prompted.');
     disp(' ');
-    disp('TIPS FOR BEST PIECE DETECTION:');
-    disp('------------------------------');
-    disp('- Use a plain, uniform background (white, black, or solid color)');
-    disp('- Ensure good lighting without harsh shadows');
-    disp('- Space pieces apart so they don''t touch');
-    disp('- Keep camera parallel to the surface (avoid angles)');
-    disp('- Pieces should be 1-50% of the image area each');
+    disp('Method B - Direct paths:');
+    disp('  >> puzzle = ''/path/to/puzzle_with_holes.jpg'';');
+    disp('  >> pieces = {''/path/to/pieces1.jpg'', ''/path/to/pieces2.jpg''};');
+    disp('  >> [matches, scores] = jigsawQuickSolve(puzzle, pieces);');
     disp(' ');
-    disp('UNDERSTANDING OUTPUT:');
+    disp('TIPS FOR BEST RESULTS:');
+    disp('----------------------');
+    disp('- Holes should be clearly visible (contrasting with puzzle)');
+    disp('- Use consistent lighting for all photos');
+    disp('- Place loose pieces on a plain, uniform background');
+    disp('- Avoid shadows on the pieces');
+    disp(' ');
+    disp('UNDERSTANDING RESULTS:');
     disp('---------------------');
-    disp('The solver tells you:');
+    disp('For each hole in your puzzle, the solver tells you:');
     disp('  - Which PHOTO contains the matching piece');
-    disp('  - Which PIECE number within that photo');
-    disp('  - The matching piece is highlighted in green');
+    disp('  - Which PIECE number in that photo');
+    disp('  - Match score (higher = better match)');
     disp(' ');
-    disp('UNDERSTANDING SCORES:');
-    disp('---------------------');
-    disp('- Color Score: How well colors match (60% of total)');
-    disp('- Geometry Score: How well patterns/edges match (40% of total)');
-    disp('- Total Score: Combined match confidence (0-100%)');
-    disp(' ');
-    disp('CONFIDENCE LEVELS:');
-    disp('  HIGH   - Best match is 15+ points ahead (reliable)');
-    disp('  MEDIUM - Best match is 5-15 points ahead (likely correct)');
-    disp('  LOW    - Best match is <5 points ahead (uncertain)');
+    disp('Multiple connected holes are treated as one region.');
+    disp('The solver matches by comparing colors around the hole');
+    disp('edges with the colors of each piece.');
     disp(' ');
 end
