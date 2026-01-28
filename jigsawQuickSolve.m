@@ -1,27 +1,29 @@
-function [bestMatch, scores] = jigsawQuickSolve(targetPath, candidatePaths)
+function [bestMatch, allScores] = jigsawQuickSolve(targetPath, candidatePaths)
 %JIGSAWQUICKSOLVE Quick jigsaw puzzle solver for MATLAB Mobile
-%   Simplified version that accepts file paths directly
+%   Detects multiple pieces in each candidate photo and finds the best match
 %
 %   Usage:
 %       [bestMatch, scores] = jigsawQuickSolve(targetPath, candidatePaths)
 %
 %   Inputs:
 %       targetPath     - Path to the target image (hole to fill)
-%       candidatePaths - Cell array of paths to candidate images
+%       candidatePaths - Cell array of paths to candidate photos
+%                        (each photo can contain multiple puzzle pieces)
 %
 %   Outputs:
-%       bestMatch - Index of the best matching candidate (1-based)
-%       scores    - Structure array with detailed scores for each candidate
+%       bestMatch - Structure with info about the best matching piece:
+%                   .photoIndex  - Which photo contains the piece
+%                   .pieceIndex  - Which piece within that photo
+%                   .score       - Match score (0-100)
+%                   .pieceImage  - Cropped image of the matching piece
+%       allScores - Structure array with scores for all detected pieces
 %
 %   Example:
 %       target = 'images/hole.jpg';
-%       candidates = {'images/piece1.jpg', 'images/piece2.jpg', ...
-%                     'images/piece3.jpg', 'images/piece4.jpg', ...
-%                     'images/piece5.jpg', 'images/piece6.jpg', ...
-%                     'images/piece7.jpg', 'images/piece8.jpg', ...
-%                     'images/piece9.jpg', 'images/piece10.jpg'};
-%       [best, scores] = jigsawQuickSolve(target, candidates);
-%       fprintf('Best match is piece #%d\n', best);
+%       photos = {'images/pieces_photo1.jpg', 'images/pieces_photo2.jpg'};
+%       [best, scores] = jigsawQuickSolve(target, photos);
+%       fprintf('Best match: Photo #%d, Piece #%d (Score: %.1f%%)\n', ...
+%           best.photoIndex, best.pieceIndex, best.score);
 
     %% Validate inputs
     if ~exist(targetPath, 'file')
@@ -34,98 +36,339 @@ function [bestMatch, scores] = jigsawQuickSolve(targetPath, candidatePaths)
 
     %% Load target image
     fprintf('Loading target image...\n');
-    targetImg = loadAndPreprocess(targetPath);
+    targetImg = loadAndPreprocess(targetPath, 512);
 
-    %% Load and analyze candidates
-    numCandidates = length(candidatePaths);
-    scores = struct('index', {}, 'colorScore', {}, 'geometryScore', {}, ...
-                    'totalScore', {}, 'path', {});
+    %% Process each candidate photo and detect pieces
+    allPieces = {};
+    pieceInfo = [];
 
-    fprintf('Analyzing %d candidates...\n', numCandidates);
+    numPhotos = length(candidatePaths);
+    fprintf('Processing %d photos for puzzle pieces...\n', numPhotos);
 
-    targetFeatures = quickExtractFeatures(targetImg);
-
-    for i = 1:numCandidates
-        if ~exist(candidatePaths{i}, 'file')
-            warning('Candidate %d not found: %s', i, candidatePaths{i});
+    for photoIdx = 1:numPhotos
+        if ~exist(candidatePaths{photoIdx}, 'file')
+            warning('Photo %d not found: %s', photoIdx, candidatePaths{photoIdx});
             continue;
         end
 
-        candidateImg = loadAndPreprocess(candidatePaths{i});
-        candidateFeatures = quickExtractFeatures(candidateImg);
+        fprintf('  Photo %d: ', photoIdx);
+        photoImg = loadAndPreprocess(candidatePaths{photoIdx}, 1024);
 
-        % Calculate scores
+        % Detect pieces in this photo
+        [pieces, bboxes] = detectPiecesQuick(photoImg);
+
+        fprintf('found %d pieces\n', length(pieces));
+
+        for p = 1:length(pieces)
+            allPieces{end+1} = pieces{p};
+            pieceInfo(end+1).photoIndex = photoIdx;
+            pieceInfo(end).pieceIndex = p;
+            pieceInfo(end).boundingBox = bboxes{p};
+            pieceInfo(end).photoPath = candidatePaths{photoIdx};
+        end
+    end
+
+    totalPieces = length(allPieces);
+    fprintf('\nTotal pieces detected: %d\n', totalPieces);
+
+    if totalPieces == 0
+        error('No pieces detected in any photo. Check image quality and lighting.');
+    end
+
+    %% Analyze each piece against target
+    fprintf('Analyzing pieces...\n');
+
+    targetFeatures = quickExtractFeatures(targetImg);
+    allScores = struct('pieceIndex', {}, 'photoIndex', {}, 'localPieceIndex', {}, ...
+                       'colorScore', {}, 'geometryScore', {}, 'totalScore', {});
+
+    for i = 1:totalPieces
+        candidateFeatures = quickExtractFeatures(allPieces{i});
+
         colorScore = quickColorScore(targetFeatures, candidateFeatures);
         geometryScore = quickGeometryScore(targetFeatures, candidateFeatures);
         totalScore = 0.6 * colorScore + 0.4 * geometryScore;
 
-        scores(i).index = i;
-        scores(i).colorScore = colorScore;
-        scores(i).geometryScore = geometryScore;
-        scores(i).totalScore = totalScore;
-        scores(i).path = candidatePaths{i};
+        allScores(i).pieceIndex = i;
+        allScores(i).photoIndex = pieceInfo(i).photoIndex;
+        allScores(i).localPieceIndex = pieceInfo(i).pieceIndex;
+        allScores(i).colorScore = colorScore;
+        allScores(i).geometryScore = geometryScore;
+        allScores(i).totalScore = totalScore;
+        allScores(i).boundingBox = pieceInfo(i).boundingBox;
 
-        fprintf('  Candidate %d: %.1f%%\n', i, totalScore);
+        fprintf('  Piece %d (Photo %d, #%d): %.1f%%\n', ...
+            i, pieceInfo(i).photoIndex, pieceInfo(i).pieceIndex, totalScore);
     end
 
     %% Find best match
-    totalScores = [scores.totalScore];
-    [~, bestMatch] = max(totalScores);
+    [bestScore, bestIdx] = max([allScores.totalScore]);
+
+    bestMatch.photoIndex = allScores(bestIdx).photoIndex;
+    bestMatch.pieceIndex = allScores(bestIdx).localPieceIndex;
+    bestMatch.globalIndex = bestIdx;
+    bestMatch.score = bestScore;
+    bestMatch.colorScore = allScores(bestIdx).colorScore;
+    bestMatch.geometryScore = allScores(bestIdx).geometryScore;
+    bestMatch.pieceImage = allPieces{bestIdx};
+    bestMatch.boundingBox = allScores(bestIdx).boundingBox;
+    bestMatch.photoPath = pieceInfo(bestIdx).photoPath;
 
     fprintf('\n=== RESULT ===\n');
-    fprintf('Best match: Candidate #%d (Score: %.1f%%)\n', bestMatch, scores(bestMatch).totalScore);
-    fprintf('Path: %s\n', scores(bestMatch).path);
+    fprintf('Best match: Photo #%d, Piece #%d\n', bestMatch.photoIndex, bestMatch.pieceIndex);
+    fprintf('Score: %.1f%% (Color: %.1f%%, Geometry: %.1f%%)\n', ...
+        bestMatch.score, bestMatch.colorScore, bestMatch.geometryScore);
+    fprintf('Photo path: %s\n', bestMatch.photoPath);
+
+    % Confidence
+    if totalPieces > 1
+        sortedScores = sort([allScores.totalScore], 'descend');
+        scoreDiff = sortedScores(1) - sortedScores(2);
+        if scoreDiff > 15
+            fprintf('Confidence: HIGH (%.1f points ahead)\n', scoreDiff);
+        elseif scoreDiff > 5
+            fprintf('Confidence: MEDIUM (%.1f points ahead)\n', scoreDiff);
+        else
+            fprintf('Confidence: LOW (%.1f points ahead)\n', scoreDiff);
+        end
+    end
 end
 
-function img = loadAndPreprocess(filepath)
+%% LOAD AND PREPROCESS
+function img = loadAndPreprocess(filepath, maxSize)
     img = imread(filepath);
 
-    % Convert grayscale to RGB
     if size(img, 3) == 1
         img = cat(3, img, img, img);
     end
 
-    % Resize to max 256px for faster mobile processing
     [h, w, ~] = size(img);
-    maxSize = 256;
     if max(h, w) > maxSize
         scale = maxSize / max(h, w);
         img = imresize(img, scale);
     end
 end
 
-function features = quickExtractFeatures(img)
-    % Simplified feature extraction for speed
+%% QUICK PIECE DETECTION
+function [pieces, boundingBoxes] = detectPiecesQuick(img)
+    pieces = {};
+    boundingBoxes = {};
 
+    [h, w, ~] = size(img);
+    imgDouble = im2double(img);
+    imgGray = rgb2gray(img);
+
+    % Detect background from corners
+    cornerSize = round(min(h, w) * 0.05);
+    corners = [
+        imgDouble(1:cornerSize, 1:cornerSize, :);
+        imgDouble(1:cornerSize, end-cornerSize+1:end, :);
+        imgDouble(end-cornerSize+1:end, 1:cornerSize, :);
+        imgDouble(end-cornerSize+1:end, end-cornerSize+1:end, :)
+    ];
+    bgColor = squeeze(mean(reshape(corners, [], 3), 1));
+
+    % Color distance from background
+    colorDist = sqrt(sum((imgDouble - reshape(bgColor, 1, 1, 3)).^2, 3));
+
+    % Threshold
+    threshold = max(0.12, graythresh(colorDist) * 0.7);
+    mask = colorDist > threshold;
+
+    % Clean up
+    mask = imfill(mask, 'holes');
+    minArea = round(h * w * 0.003);
+    mask = bwareaopen(mask, minArea);
+    mask = imclose(mask, strel('disk', 4));
+    mask = imerode(mask, strel('disk', 2));
+    mask = imdilate(mask, strel('disk', 2));
+
+    % Find connected components
+    CC = bwconncomp(mask);
+    stats = regionprops(CC, 'BoundingBox', 'Area', 'PixelIdxList');
+
+    maxArea = round(h * w * 0.6);
+
+    for i = 1:length(stats)
+        area = stats(i).Area;
+        if area < minArea || area > maxArea
+            continue;
+        end
+
+        bbox = stats(i).BoundingBox;
+        x = max(1, floor(bbox(1)));
+        y = max(1, floor(bbox(2)));
+        bw = min(w - x, ceil(bbox(3)));
+        bh = min(h - y, ceil(bbox(4)));
+
+        % Skip very elongated shapes
+        aspectRatio = max(bw, bh) / max(1, min(bw, bh));
+        if aspectRatio > 5
+            continue;
+        end
+
+        % Extract with padding
+        pad = 3;
+        x1 = max(1, x - pad);
+        y1 = max(1, y - pad);
+        x2 = min(w, x + bw + pad);
+        y2 = min(h, y + bh + pad);
+
+        pieceImg = img(y1:y2, x1:x2, :);
+
+        % Create piece mask
+        pieceMask = false(h, w);
+        pieceMask(stats(i).PixelIdxList) = true;
+        pieceMaskCropped = pieceMask(y1:y2, x1:x2);
+
+        % Apply mask
+        for c = 1:3
+            ch = pieceImg(:,:,c);
+            ch(~pieceMaskCropped) = 255;
+            pieceImg(:,:,c) = ch;
+        end
+
+        % Resize for analysis
+        [ph, pw, ~] = size(pieceImg);
+        if max(ph, pw) > 200
+            scale = 200 / max(ph, pw);
+            pieceImg = imresize(pieceImg, scale);
+        end
+
+        pieces{end+1} = pieceImg;
+        boundingBoxes{end+1} = [x1, y1, x2-x1, y2-y1];
+    end
+
+    % Fallback if no pieces found
+    if isempty(pieces)
+        [pieces, boundingBoxes] = detectPiecesFallback(img);
+    end
+end
+
+%% FALLBACK PIECE DETECTION
+function [pieces, boundingBoxes] = detectPiecesFallback(img)
+    pieces = {};
+    boundingBoxes = {};
+
+    [h, w, ~] = size(img);
+    imgHSV = rgb2hsv(img);
+
+    % Use saturation and value
+    sat = imgHSV(:,:,2);
+    val = imgHSV(:,:,3);
+
+    % Pieces typically have higher saturation
+    mask = sat > graythresh(sat) * 0.4;
+    mask = mask | (stdfilt(rgb2gray(img), ones(11)) > 0.05);
+
+    mask = imfill(mask, 'holes');
+    minArea = round(h * w * 0.005);
+    mask = bwareaopen(mask, minArea);
+    mask = imclose(mask, strel('disk', 6));
+
+    CC = bwconncomp(mask);
+    stats = regionprops(CC, 'BoundingBox', 'Area', 'PixelIdxList');
+
+    maxArea = round(h * w * 0.6);
+
+    for i = 1:length(stats)
+        area = stats(i).Area;
+        if area < minArea || area > maxArea
+            continue;
+        end
+
+        bbox = stats(i).BoundingBox;
+        x = max(1, floor(bbox(1)));
+        y = max(1, floor(bbox(2)));
+        bw = min(w - x, ceil(bbox(3)));
+        bh = min(h - y, ceil(bbox(4)));
+
+        if max(bw, bh) / max(1, min(bw, bh)) > 5
+            continue;
+        end
+
+        pad = 3;
+        x1 = max(1, x - pad);
+        y1 = max(1, y - pad);
+        x2 = min(w, x + bw + pad);
+        y2 = min(h, y + bh + pad);
+
+        pieceImg = img(y1:y2, x1:x2, :);
+
+        pieceMask = false(h, w);
+        pieceMask(stats(i).PixelIdxList) = true;
+        pieceMaskCropped = pieceMask(y1:y2, x1:x2);
+
+        for c = 1:3
+            ch = pieceImg(:,:,c);
+            ch(~pieceMaskCropped) = 255;
+            pieceImg(:,:,c) = ch;
+        end
+
+        [ph, pw, ~] = size(pieceImg);
+        if max(ph, pw) > 200
+            pieceImg = imresize(pieceImg, 200 / max(ph, pw));
+        end
+
+        pieces{end+1} = pieceImg;
+        boundingBoxes{end+1} = [x1, y1, x2-x1, y2-y1];
+    end
+end
+
+%% QUICK FEATURE EXTRACTION
+function features = quickExtractFeatures(img)
     imgDouble = im2double(img);
 
-    % Color histogram (16 bins)
-    features.histR = imhist(img(:,:,1), 16) / numel(img(:,:,1));
-    features.histG = imhist(img(:,:,2), 16) / numel(img(:,:,2));
-    features.histB = imhist(img(:,:,3), 16) / numel(img(:,:,3));
+    % Exclude white background
+    whiteMask = all(imgDouble > 0.95, 3);
+    validMask = ~whiteMask;
+
+    % Color histograms
+    numBins = 16;
+    if sum(validMask(:)) > 50
+        features.histR = histcounts(img(repmat(validMask, [1,1,1]) & (repmat((1:size(img,3))==1, [size(img,1), size(img,2), 1])), ...
+            0:256/numBins:256, 'Normalization', 'probability')';
+        R = img(:,:,1); G = img(:,:,2); B = img(:,:,3);
+        features.histR = histcounts(R(validMask), 0:256/numBins:256, 'Normalization', 'probability')';
+        features.histG = histcounts(G(validMask), 0:256/numBins:256, 'Normalization', 'probability')';
+        features.histB = histcounts(B(validMask), 0:256/numBins:256, 'Normalization', 'probability')';
+    else
+        features.histR = imhist(img(:,:,1), numBins) / numel(img(:,:,1));
+        features.histG = imhist(img(:,:,2), numBins) / numel(img(:,:,2));
+        features.histB = imhist(img(:,:,3), numBins) / numel(img(:,:,3));
+    end
 
     % Mean color
-    features.meanColor = squeeze(mean(mean(imgDouble, 1), 2));
+    for c = 1:3
+        ch = imgDouble(:,:,c);
+        if sum(validMask(:)) > 50
+            features.meanColor(c) = mean(ch(validMask));
+        else
+            features.meanColor(c) = mean(ch(:));
+        end
+    end
 
-    % Grayscale for geometry
+    % Geometry features
     imgGray = rgb2gray(img);
     imgGrayD = im2double(imgGray);
 
-    % Edge histogram
     [Gx, Gy] = gradient(imgGrayD);
     gradMag = sqrt(Gx.^2 + Gy.^2);
     gradDir = atan2(Gy, Gx);
-    mask = gradMag > 0.05;
-    features.edgeHist = histcounts(gradDir(mask), linspace(-pi, pi, 9), 'Normalization', 'probability');
 
-    % Texture: contrast and smoothness
+    mask = gradMag > 0.05;
+    if sum(mask(:)) > 10
+        features.edgeHist = histcounts(gradDir(mask), linspace(-pi, pi, 9), 'Normalization', 'probability');
+    else
+        features.edgeHist = zeros(1, 8);
+    end
+
     features.contrast = std(imgGrayD(:));
     features.smoothness = 1 - mean(gradMag(:));
 end
 
+%% QUICK COLOR SCORE
 function score = quickColorScore(f1, f2)
-    % Quick color similarity
-
     histSim = (sum(min(f1.histR, f2.histR)) + ...
                sum(min(f1.histG, f2.histG)) + ...
                sum(min(f1.histB, f2.histB))) / 3;
@@ -136,9 +379,8 @@ function score = quickColorScore(f1, f2)
     score = 100 * (0.6 * histSim + 0.4 * meanSim);
 end
 
+%% QUICK GEOMETRY SCORE
 function score = quickGeometryScore(f1, f2)
-    % Quick geometry similarity
-
     edgeSim = sum(min(f1.edgeHist, f2.edgeHist));
 
     contrastDiff = abs(f1.contrast - f2.contrast);
